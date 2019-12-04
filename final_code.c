@@ -1,31 +1,21 @@
-// lab5_code.c 
+// final_code.c 
 // Jordan Baxter
-// 11.04.19
-
-//  HARDWARE SETUP:
-//  PORTA is connected to the segments of the LED display. and to the pushbuttons.
-//  PORTA.0 corresponds to segment a, PORTA.1 corresponds to segement b, etc.
-//  PORTB bits 4-6 go to a,b,c inputs of the 74HC138.
-//  PORTB bit 7 goes to the PWM transistor base.
+// 12.03.19
 
 /****************************
 TODO Section:
-+Hardware:
-  -[X] Draw Schematic for remote temperature sensor
-  -[X] Assemble remote temperature sensor
-  -[X] Draw schematic for local temperature sensor
-  -[X] Assemble local temperature sensor
-+Firmware Dependent on Hardware:
-  -[X] Implement UART controls for remote temperature sensor (Use seperate C file)
-  -[X] Retrieve remote and local temperature once/sec
-  -[X] Display both temperatures on LCD in real time.
-  -[X] Temperatures displayed to the whole digit
-  -[X] ExC: Display temperature to one or two decimal points
-  -[] ExC: Change temperature units.
-+Independent Firmware
-  -[X] Modify makefile for mega48
-  -[X] Create simple UART program for mega48
-****************************/
++Hardware
+-[] Install radio board with level shifting circuits and antenna.
++Hardware Dependednt Firmware
+-[] LED display shows station frequency when tuning radio, else time.
+-[] One of the encoders will adjust volume, the other will adjust station
+-[] LCD Display will be formatted as shown in lab requirements
+-[] Radio will only display odd frequencies at 200kHz intervals (e.g. 88.1, 88.3, 88.5.....)
+-[] Can choose between radio and buzzer on alarm
+-[] ExC: Station Presets
+-[] Exc: Siganl strength indication
+-[] ExC: AM radio functionality
+***********************************/
 
 
 #define F_CPU 16000000 // cpu speed in hertz 
@@ -199,6 +189,10 @@ uint8_t temp_flag = FALSE;
 extern uint8_t lm73_wr_buf[2];
 extern uint8_t lm73_rd_buf[2];
 uint16_t lm73_temp;
+
+//Used in debug mode for UART1
+char uart1_tx_buf[40];      //holds string to send to crt
+char uart1_rx_buf[40];      //holds string that recieves data from uart
 
 //External Comm Variables
 volatile uint8_t  rcv_rdy;

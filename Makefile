@@ -1,5 +1,5 @@
-PRG            =lab5_code
-OBJ            = $(PRG).o hd44780.o lm73_functions.o twi_master.o uart_functions.o
+PRG            =final_code
+OBJ            = $(PRG).o hd44780.o lm73_functions.o twi_master.o uart_functions.o si4734.o
 MCU_TARGET     = atmega128
 OPTIMIZE       = -O2    # options are 1, 2, 3, s
 CC             = avr-gcc
