@@ -5,7 +5,7 @@
 /****************************
 TODO Section:
 +Hardware
--[] Install radio board with level shifting circuits and antenna.
+-[X] Install radio board with level shifting circuits and antenna.
 +Hardware Dependednt Firmware
 -[] LED display shows station frequency when tuning radio, else time.
 -[] One of the encoders will adjust volume, the other will adjust station
@@ -106,6 +106,7 @@ ________________________________________________________________________________
 #include "hd44780.h"
 #include "twi_master.h"
 #include "uart_functions.h"
+#include "si4734.h"
 
 
 
@@ -190,14 +191,32 @@ extern uint8_t lm73_wr_buf[2];
 extern uint8_t lm73_rd_buf[2];
 uint16_t lm73_temp;
 
-//Used in debug mode for UART1
+//Radio Variables
+enum radio_band{FM, AM, SW};
+volatile enum radio_band current_radio_band;
+
+uint16_t eeprom_fm_freq;
+uint16_t eeprom_am_freq;
+uint16_t eeprom_sw_freq;
+uint8_t  eeprom_volume;
+
+uint16_t current_fm_freq;
+uint16_t current_am_freq;
+uint16_t current_sw_freq;
+uint8_t  current_volume;
+
 char uart1_tx_buf[40];      //holds string to send to crt
 char uart1_rx_buf[40];      //holds string that recieves data from uart
+
 
 //External Comm Variables
 volatile uint8_t  rcv_rdy;
 char              rx_char;
 char              rx_buf[16];
+
+//Used in debug mode for UART1
+char uart1_tx_buf[40];      //holds string to send to crt
+char uart1_rx_buf[40];      //holds string that recieves data from uart
 
 //Button Variables
   volatile uint8_t button_flags = 0;        //Flag that will be triggered by button being pressed, global because it is modified in TCNT0 ISR
