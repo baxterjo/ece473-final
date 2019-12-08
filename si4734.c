@@ -26,7 +26,7 @@ uint8_t si4734_revision_buf[16];   //buffer for holding revision  data
 enum radio_band{FM, AM, SW};
 extern volatile enum radio_band current_radio_band;
 
-volatile uint8_t STC_interrupt;  //flag bit to indicate tune or seek is done
+extern volatile uint8_t STC_interrupt;  //flag bit to indicate tune or seek is done
 
 extern uint16_t eeprom_fm_freq;
 extern uint16_t eeprom_am_freq;
@@ -125,8 +125,8 @@ void sw_tune_freq(){
 //
 void fm_pwr_up(){
 //restore the previous fm frequency  
- current_fm_freq = eeprom_read_word(&eeprom_fm_freq); //TODO: only this one does not work 
- current_volume  = eeprom_read_byte(&eeprom_volume); //TODO: only this one does not work 
+//  current_fm_freq = eeprom_read_word(&eeprom_fm_freq); //TODO: only this one does not work 
+//  current_volume  = eeprom_read_byte(&eeprom_volume); //TODO: only this one does not work 
 
 //send fm power up command
   si4734_wr_buf[0] = FM_PWR_UP; //powerup command byte
@@ -189,14 +189,14 @@ void sw_pwr_up(){
 void radio_pwr_dwn(){
 
 //save current frequency to EEPROM
-switch(current_radio_band){
-  case(FM) : eeprom_write_word(&eeprom_fm_freq, current_fm_freq); break;
-  case(AM) : eeprom_write_word(&eeprom_am_freq, current_am_freq); break;
-  case(SW) : eeprom_write_word(&eeprom_sw_freq, current_sw_freq); break;
-  default  : break;
-}//switch      
+// switch(current_radio_band){
+//   case(FM) : eeprom_write_word(&eeprom_fm_freq, current_fm_freq); break;
+//   case(AM) : eeprom_write_word(&eeprom_am_freq, current_am_freq); break;
+//   case(SW) : eeprom_write_word(&eeprom_sw_freq, current_sw_freq); break;
+//   default  : break;
+// }//switch      
 
-  eeprom_write_byte(&eeprom_volume, current_volume); //save current volume level
+  //eeprom_write_byte(&eeprom_volume, current_volume); //save current volume level
 
 //send fm power down command
     si4734_wr_buf[0] = 0x11;

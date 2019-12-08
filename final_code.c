@@ -7,10 +7,10 @@ TODO Section:
 +Hardware
 -[X] Install radio board with level shifting circuits and antenna.
 +Hardware Dependednt Firmware
--[] LED display shows station frequency when tuning radio, else time.
--[] One of the encoders will adjust volume, the other will adjust station
--[] LCD Display will be formatted as shown in lab requirements
--[] Radio will only display odd frequencies at 200kHz intervals (e.g. 88.1, 88.3, 88.5.....)
+-[X] LED display shows station frequency when tuning radio, else time.
+-[X] One of the encoders will adjust volume, the other will adjust station
+-[X] LCD Display will be formatted as shown in lab requirements
+-[X] Radio will only display odd frequencies at 200kHz intervals (e.g. 88.1, 88.3, 88.5.....)
 -[] Can choose between radio and buzzer on alarm
 -[] ExC: Station Presets
 -[] Exc: Siganl strength indication
@@ -88,11 +88,14 @@ ________________________________________________________________________________
 
 /****************************
 Structure for PortE:
-_________________________________________________________________________________
-|____7____|____6____|____5____|____4____|____3____|____2____|____1____|____0____|
-|___NC____|SFT_LD_N_|___NC____|___NC____|___NC____|___NC____|___NC____|___NC____|
 ****************************/
 #define sft_ld_n    0b01000000
+
+/****************************
+Update flags
+****************************/
+#define RADIO_FLAG  0
+#define TEMP_FLAG   1
 
 
 
@@ -143,7 +146,9 @@ typedef enum{
   SET_TIME,
   CLOCK,
   SET_ALARM,
+  TUNE
 } display_mode_t;
+
 
 //******************************************************************************
 //                             Global Variable Declarations
@@ -156,6 +161,11 @@ typedef enum{
   int8_t min = 0;                           //Min tracker, increments once every 60 min, global because it is read in TCNT0 ISR 
   int8_t hr = 12;                           //Hour tracker, increments once every 60 min. Initialized at 12 to indicate time has not beed set, global because it is read in TCNT0 ISR
 
+//Delayed update flag
+//Structure:
+//|unused|unused|unused|unused|unused|unused|temp update|radio update|
+  uint8_t delayed_update_flag = FALSE;
+
 //Alarm Variables
   uint8_t alarm_active = FALSE;
   uint8_t alarm_set = FALSE;                    //Alarm set flag, global because it is read in TCNT0 ISR       
@@ -164,6 +174,13 @@ typedef enum{
   int8_t alarm_pm = FALSE;                  //Alarm AM/PM variable, global because it is read in TCNT0 ISR
   volatile int8_t tta_sec = 0;              //Time to alarm in seconds.
   volatile int16_t tta_min = 0;             //Time to alarm in minutes.
+
+  enum alarm_mode{
+    RADIO,
+    BUZZER
+  };
+
+  enum alarm_mode a_mode = RADIO;
 
 
 //Mode Variables
@@ -185,25 +202,41 @@ volatile uint16_t adc_result;
 char lcd_str_h[16];
 char lcd_str_l[16];
 
+
 //Temp Sensor Variables
-uint8_t temp_flag = FALSE;
 extern uint8_t lm73_wr_buf[2];
 extern uint8_t lm73_rd_buf[2];
 uint16_t lm73_temp;
 
 //Radio Variables
-enum radio_band{FM, AM, SW};
-volatile enum radio_band current_radio_band;
+enum radio_band{
+  FM, 
+  AM, 
+  SW};
+volatile enum radio_band current_radio_band = FM;
+
+uint8_t rad_onoff = 1;
+
+extern uint8_t si4734_wr_buf[9];          //buffer for holding data to send to the si4734 
+extern uint8_t si4734_rd_buf[15];         //buffer for holding data recieved from the si4734
+extern uint8_t si4734_tune_status_buf[8]; //buffer for holding tune_status data  
+extern uint8_t si4734_revision_buf[16];   //buffer for holding revision  data
+
+volatile uint8_t STC_interrupt;
 
 uint16_t eeprom_fm_freq;
 uint16_t eeprom_am_freq;
 uint16_t eeprom_sw_freq;
 uint8_t  eeprom_volume;
 
-uint16_t current_fm_freq;
+uint16_t current_fm_freq = 9990;
+uint16_t past_fm_freq = 9990;
 uint16_t current_am_freq;
 uint16_t current_sw_freq;
 uint8_t  current_volume;
+uint8_t rssi;
+uint8_t sig_str;
+uint8_t tune_tim;
 
 char uart1_tx_buf[40];      //holds string to send to crt
 char uart1_rx_buf[40];      //holds string that recieves data from uart
@@ -373,7 +406,7 @@ void segsum(uint16_t sum, int8_t colon, int8_t pm, display_mode_t d_mode) {
         } else {
           segment_data[i] = dt7_blank;
         }
-        if(d_mode != SET_ALARM && d_mode != SET_TIME && !(alarm_set && colon)){
+        if(d_mode != SET_ALARM && d_mode != SET_TIME && !(alarm_set && colon) && !(tune_tim > 0)){
           segment_data[i] |= 1 << segdp;
         }
         break;
@@ -417,6 +450,7 @@ void button_pressed(uint8_t buttons, display_mode_t* d_mode, int8_t* sec_p, uint
         }
         break;
       case 1:
+      if(*d_mode == CLOCK){
         if(!*alarm_set_p){
           *alarm_set_p = U8TRUE;       //Toggle the alarm
           tta_min = (alarm_hr - hr) * 60 + (alarm_min - min - 1); //Set time to alarm in minutes. by taking the difference between alarm time and clock time.
@@ -427,14 +461,39 @@ void button_pressed(uint8_t buttons, display_mode_t* d_mode, int8_t* sec_p, uint
           }
           tta_sec = 60 - sec;                                  //Set the time to alarm in seconds by subtracting the clock seconds by 60
           cursor_home();
-          string2lcd("ALARM");
+          strncpy(&lcd_str_h[0], "ALARM", 5);
+          string2lcd(lcd_str_h);
         } else  {
           *alarm_set_p = FALSE;
           cursor_home();
-          string2lcd("     ");
+          strncpy(&lcd_str_h[0], "     ", 5);
+          string2lcd(lcd_str_h);
         }
+      } else if(*d_mode == SET_ALARM){
+        if(a_mode == RADIO){
+          a_mode = BUZZER;
+          lcd_str_l[15] = 'B';
+          home_line2();
+          string2lcd(lcd_str_l);
+        } else if(a_mode == BUZZER) {
+          a_mode = RADIO;
+          lcd_str_l[15] = 'R';
+          home_line2();
+          string2lcd(lcd_str_l);
+        }
+      }
+        
         break;
       case 2:
+        if(rad_onoff == 0){
+          fm_pwr_up();
+          fm_tune_freq();
+          current_radio_band = FM;
+          rad_onoff = 1;
+        } else {
+          radio_pwr_dwn();
+          rad_onoff = 0;
+        }
         break;
       case 3:
         break;
@@ -444,7 +503,6 @@ void button_pressed(uint8_t buttons, display_mode_t* d_mode, int8_t* sec_p, uint
         break;
       case 6:
         if(*d_mode == CLOCK){
-          last_mode = CLOCK;
           *d_mode = SET_ALARM;
         } else {
           *alarm_set_p = U8TRUE;
@@ -456,8 +514,9 @@ void button_pressed(uint8_t buttons, display_mode_t* d_mode, int8_t* sec_p, uint
           }
           tta_sec = 60 - sec;                                  //Set the time to alarm in seconds by subtracting the clock seconds by 60
           cursor_home();
-          string2lcd("ALARM");
-          *d_mode = last_mode;
+          strncpy(&lcd_str_h[0], "ALARM", 5);
+          string2lcd(lcd_str_h);
+          *d_mode = CLOCK;
         }
         break;
       case 7:
@@ -491,6 +550,9 @@ void left_turned(int8_t direction, display_mode_t display_mode, int8_t* hr_p, ui
       *hr_p += (1 * direction);
       break;
     case CLOCK:
+      if(current_radio_band == FM){
+        current_fm_freq += 20 * direction;
+      }
       break;
     case SET_ALARM:
       *alarm_hrp += (1 * direction);
@@ -511,8 +573,8 @@ void right_turned(int8_t direction, display_mode_t display_mode, uint8_t* min_p,
       break;
     case CLOCK:
       volume += 5 * direction;
-      if(volume > (256 * .75)){
-        volume = 256 * .75;
+      if(volume > (250)){
+        volume = 250;
       }
       if(OCR3B < 5){
         volume = 6;
@@ -550,7 +612,7 @@ uint8_t main(){
 //*******************************************************
   DDRC |= 0x40;                     //Set port c bit 6 as output (buzzer out)
   DDRB |= 0xF0;                     //set port b bits 4-7 B as outputs
-  DDRE |= 0x50;                     //Set port e bits 4 and 6 as output.
+  DDRE |= 0x56;                     //Set port e bits 1,3,4 and 6 as output.
   spi_init();                       //Call SPI init
   tcnt0_init();
   tcnt1_init();
@@ -563,21 +625,112 @@ uint8_t main(){
   init_twi();
   clear_display();
   cursor_home();
+  strncpy(&lcd_str_h[0], "                ", 16);               //Initialize all characters in the LCD strings to blanks.
+  strncpy(&lcd_str_l[0], "                ", 16);
+  if(a_mode = RADIO){
+    lcd_str_l[15] = 'R';
+  }else if(a_mode = BUZZER){
+    lcd_str_l[15] = 'B';
+  }
 
   lm73_wr_buf[0] = LM73_PTR_TEMP;                               //load lm73_wr_buf[0] with temperature pointer address
   twi_start_wr(LM73_ADDRESS, &lm73_wr_buf[0], TWI_BUFFER_SIZE); //start the TWI write process
   while(twi_busy()){}                                           //wait for the xfer to finish
+
+  //hardware reset of Si4734 written by Roger Traylor
+
+  PORTE &= ~(1<<PE7); //int2 initially low to sense TWI mode
+  DDRE  |= 0x80;      //turn on Port E bit 7 to drive it low
+  PORTE |=  (1<<PE2); //hardware reset Si4734 
+  _delay_us(200);     //hold for 200us, 100us by spec         
+  PORTE &= ~(1<<PE2); //release reset 
+  _delay_us(30);      //5us required because of my slow I2C translators I suspect
+                      //Si code in "low" has 30us delay...no explaination given
+  DDRE  &= ~(0x80);   //now Port E bit 7 becomes input from the radio interrupt
+
+  EICRB |= 0xC0;      //Turn on the external interrupt
+  EIMSK |= (1<<7);
+
+  fm_pwr_up();
+  while(twi_busy()){}
+  current_fm_freq = 9990;
+  past_fm_freq = current_fm_freq;
+  dtostrf((float)current_fm_freq / 100, 5, 1, &lcd_str_h[8]);
+  strncpy(&lcd_str_h[6], "S=", 2);
+  //13
+  switch(current_radio_band){
+    case FM:
+      strncpy(&lcd_str_h[13], "FM",2);
+      break;
+    case AM:
+      strncpy(&lcd_str_h[13], "AM",2);
+      break;
+    case SW:
+      strncpy(&lcd_str_h[13], "SW",2);
+      break;
+  }
+  fm_tune_freq();
+
+  cursor_home();
+  string2lcd(lcd_str_h);
+
+  
+
+
+
+  
 
   /********************
    * Enter loop
    *******************/
   while(1){
   /********************
+   * Radio Update
+   *******************/
+    switch(current_radio_band){
+      case FM:
+        if(past_fm_freq != current_fm_freq){
+          past_fm_freq = current_fm_freq;
+          while(twi_busy()){}
+          fm_tune_freq(current_fm_freq);
+          dtostrf((float)current_fm_freq / 100, 5, 1, &lcd_str_h[8]);
+          cursor_home();
+          strncpy(&lcd_str_h[13], "FM",2);
+          string2lcd(lcd_str_h);
+          tune_tim = 3;
+        }
+        break;
+      case AM:
+        break;
+      case SW:
+        break;
+      default:
+      break;
+    }
+      delayed_update_flag &= ~(1<<RADIO_FLAG);
+      fm_rsq_status();
+      rssi = si4734_tune_status_buf[4];
+      //redefine rssi to be a thermometer code
+      if(rssi<= 8) {sig_str = 0x00;} else
+      if(rssi<=16) {sig_str = 0x01;} else
+      if(rssi<=24) {sig_str = 0x03;} else
+      if(rssi<=32) {sig_str = 0x07;} else
+      if(rssi<=40) {sig_str = 0x0F;} else
+      if(rssi<=48) {sig_str = 0x1F;} else
+      if(rssi<=56) {sig_str = 0x3F;} else
+      if(rssi<=64) {sig_str = 0x7F;} else
+      if(rssi>=64) {sig_str = 0xFF;} 
+    
+    
+
+    
+
+  /********************
    * SPI Read/Write
    *******************/
       PORTE |= sft_ld_n;                  //Send rising reg clock edge to encoders, this will allow the encoder to shift in new data.
       PORTB &= ~spi_SS1;                  //Select SPI slave 1
-      SPDR = 1 << d_mode;               //send display_mode to the bargraph 
+      SPDR = sig_str;                   //send relative signal strength to the bargraph. 
       while (bit_is_clear(SPSR,SPIF)){}   //spin till SPI data has been sent
       PORTB |= spi_SS1;                   //Deselect SPI slave 1
       PORTE &= ~sft_ld_n;                 //Send falling reg clock edge to encoders, this will keep them in LD mode until next read.
@@ -697,8 +850,7 @@ uint8_t main(){
     tta_min--;
   }
 
-  if(d_mode == CLOCK && tta_min <= 0 && tta_sec <= 0 && alarm_set && sec % 2){
-    volume = 255 * .4;
+  if(d_mode == CLOCK && tta_min <= 0 && tta_sec <= 0 && alarm_set && sec % 2 && a_mode == BUZZER){
     TIMSK |= (1 << OCIE1A);
   } else {
     TIMSK &= ~(1 << OCIE1A);
@@ -724,16 +876,16 @@ uint8_t main(){
 /********************
    * Temp Sensor Updates
    *******************/
-  if(temp_flag){
-    temp_flag = FALSE;
+  if(delayed_update_flag & (1<<TEMP_FLAG)){
+    delayed_update_flag  &= ~(1<<TEMP_FLAG);
     uart_putc('T');                                               //Initiate remote sensor read
     uart_putc('\0');
-    twi_start_rd(LM73_ADDRESS, &lm73_rd_buf[0], TWI_BUFFER_SIZE); //Initiate read temperature data from LM73 (2 bytes)
+    twi_start_rd(LM73_ADDRESS, &lm73_rd_buf[0], 2); //Initiate read temperature data from LM73 (2 bytes)
     while(twi_busy()){}                         //wait for it to finish
     lm73_temp = lm73_rd_buf[0];                 //save high temperature byte into lm73_temp
     lm73_temp <<= 8;                            //shift it into upper byte 
     lm73_temp |= lm73_rd_buf[1];                //"OR" in the low temp byte to lm73_temp 
-    lm73_temp_convert(lcd_str_l, lm73_temp, 0); // Convert read temp to string and place in lcd string low.
+    lm73_temp_convert(&lcd_str_l[0], lm73_temp, 0); // Convert read temp to string and place in lcd string low.
     lcd_str_l[4] = 'F';                         //Write the units to the lcd.
     lcd_str_l[5] = ' ';
     home_line2();
@@ -765,9 +917,24 @@ ISR(TIMER0_COMP_vect){
   if(mSec >= 512){
     mSec = 0;
     sec++;
-    temp_flag = U8TRUE;
+    delayed_update_flag = U8TRUE;
+    if(tune_tim > 0){
+      tune_tim--;
+    }
     if(tta_sec > 0 || tta_min > 0){
       tta_sec--;
+      if(d_mode == CLOCK && tta_min <= 0 && tta_sec <= 0 && alarm_set){
+        volume = 255 * 0.5;
+        // if(a_mode == RADIO && rad_onoff == 0){
+        //   //fm_pwr_up();
+        //   //while(twi_busy()){}
+        //   //fm_tune_freq();
+        //   rad_onoff = 1;
+        // } else {
+        //   radio_pwr_dwn();
+        //   rad_onoff = 0;
+        // }
+      }
     }
   }
   DDRA = 0x00;                      //make PORTA an input port with pullups 
@@ -795,8 +962,13 @@ ISR(TIMER0_COMP_vect){
         segsum(disp_value, colon, alarm_pm, d_mode);
         break;
       default:                                  //Default is display clock.
-        disp_value = (hr * 100) + min;
-        segsum(disp_value, colon, pm, d_mode);  //break up the disp_value to 4, BCD digits in the array: call (segsum)
+        if(tune_tim > 0){
+          segsum(current_fm_freq / 10, 0, 0, d_mode);
+        } else{
+          disp_value = (hr * 100) + min;
+          segsum(disp_value, colon, pm, d_mode);  //break up the disp_value to 4, BCD digits in the array: call (segsum)
+        }
+        
         break;
     }
     
@@ -832,3 +1004,24 @@ static  uint8_t  i;
     i=0;  
   }
 }
+
+//******************************************************************************
+//                          External Interrupt 7 ISR  
+// Written by Roger Traylor                   
+// Handles the interrupts from the radio that tells us when a command is done.
+// The interrupt can come from either a "clear to send" (CTS) following most
+// commands or a "seek tune complete" interrupt (STC) when a scan or tune command
+// like fm_tune_freq is issued. The GPIO2/INT pin on the Si4734 emits a low
+// pulse to indicate the interrupt. I have measured but the datasheet does not
+// confirm a width of 3uS for CTS and 1.5uS for STC interrupts.
+//
+// I am presently using the Si4734 so that its only interrupting when the 
+// scan_tune_complete is pulsing. Seems to work fine. (12.2014)
+//
+// External interrupt 7 is on Port E bit 7. The interrupt is triggered on the
+// rising edge of Port E bit 7.  The i/o clock must be running to detect the
+// edge (not asynchronouslly triggered)
+//******************************************************************************
+ISR(INT7_vect){STC_interrupt = TRUE;}
+//******************************************************************************
+

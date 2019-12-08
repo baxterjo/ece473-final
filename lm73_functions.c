@@ -18,7 +18,7 @@ uint8_t lm73_rd_buf[2];
 //array, and a format (deg F or C) it formats the temperature into ascii in 
 //the buffer pointed to by the arguement.
 //******************************************************************************
-void lm73_temp_convert(char temp_digits[], uint16_t lm73_temp, uint8_t f_not_c){
+void lm73_temp_convert(char* temp_digits, uint16_t lm73_temp, uint8_t f_not_c){
     int16_t raw_temp = lm73_temp & ~(1<<15);    //Take off sign bit from lm73 and place in raw_temp data.
     raw_temp >>= 5;                               //Shave off unused bits in LM73 resolution configuration.
     if(lm73_temp & (1<<15)){                    //If sign bit is present, make raw data negative.
