@@ -215,7 +215,7 @@ enum radio_band{
   SW};
 volatile enum radio_band current_radio_band = FM;
 
-uint8_t rad_onoff = 1;
+uint8_t rad_onoff = U8TRUE;               //Create radio on/off variable.
 
 extern uint8_t si4734_wr_buf[9];          //buffer for holding data to send to the si4734 
 extern uint8_t si4734_rd_buf[15];         //buffer for holding data recieved from the si4734
@@ -469,7 +469,7 @@ void button_pressed(uint8_t buttons, display_mode_t* d_mode, int8_t* sec_p, uint
           strncpy(&lcd_str_h[0], "     ", 5);
           string2lcd(lcd_str_h);
         }
-      } else if(*d_mode == SET_ALARM){
+      } else if(*d_mode == SET_ALARM){                        //If in SET_ALARM mode, this button will toggle between buzzer or radio mode.
         if(a_mode == RADIO){
           a_mode = BUZZER;
           lcd_str_l[15] = 'B';
@@ -484,15 +484,19 @@ void button_pressed(uint8_t buttons, display_mode_t* d_mode, int8_t* sec_p, uint
       }
         
         break;
-      case 2:
-        if(rad_onoff == 0){
+      case 2:                                                 //This button will turn the radio on and off, if the radio has been turned on by
+        if(rad_onoff == FALSE){                               //the alarm, this button will turn the radio and the alarm off.
           fm_pwr_up();
           fm_tune_freq();
           current_radio_band = FM;
-          rad_onoff = 1;
-        } else {
+          rad_onoff = U8TRUE;
+        } else if(alarm_active && rad_onoff) {
           radio_pwr_dwn();
-          rad_onoff = 0;
+          rad_onoff = FALSE;
+          *alarm_set_p = FALSE;
+        } else if(rad_onoff){
+          radio_pwr_dwn();
+          rad_onoff = FALSE;
         }
         break;
       case 3:
@@ -547,15 +551,15 @@ void left_turned(int8_t direction, display_mode_t display_mode, int8_t* hr_p, ui
     case TIME_NOT_SET:
       break;
     case SET_TIME:
-      *hr_p += (1 * direction);
+      *hr_p += (1 * direction);             //If in SET_TIME mode, change the time in hours by 1
       break;
     case CLOCK:
       if(current_radio_band == FM){
-        current_fm_freq += 20 * direction;
+        current_fm_freq += 20 * direction;  //If in clock mode, change the frequency by 0.2MHz
       }
       break;
     case SET_ALARM:
-      *alarm_hrp += (1 * direction);
+      *alarm_hrp += (1 * direction);        //If in SET_ALARM mode, change the alarm time by 1 hour.
       break;
     default:
       break;
@@ -569,19 +573,19 @@ void right_turned(int8_t direction, display_mode_t display_mode, uint8_t* min_p,
     case TIME_NOT_SET:
       break;
     case SET_TIME:
-      *min_p += (1 * direction);
+      *min_p += (1 * direction);            //If in SET_TIME mode, change the minutes
       break;
     case CLOCK:
-      volume += 5 * direction;
-      if(volume > (250)){
+      volume += 5 * direction;              //If in clock mode, cchange the volume.
+      if(volume > (250)){                   //Set upper and lower limits for volume to avoid overflow.
         volume = 250;
       }
       if(OCR3B < 5){
-        volume = 6;
+        volume = 6; 
       }
       break;
     case SET_ALARM:
-      *alarm_minp += (1 * direction);
+      *alarm_minp += (1 * direction);       //If in SET_ALARM mode, change the alarm time minutes.     
       break;
     default:
       break;
@@ -651,13 +655,13 @@ uint8_t main(){
   EICRB |= 0xC0;      //Turn on the external interrupt
   EIMSK |= (1<<7);
 
-  fm_pwr_up();
+  fm_pwr_up();        //Radio power up sequence.
   while(twi_busy()){}
+  rad_onoff = U8TRUE;
   current_fm_freq = 9990;
   past_fm_freq = current_fm_freq;
-  dtostrf((float)current_fm_freq / 100, 5, 1, &lcd_str_h[8]);
+  dtostrf((float)current_fm_freq / 100, 5, 1, &lcd_str_h[8]); // Send the station to LCD
   strncpy(&lcd_str_h[6], "S=", 2);
-  //13
   switch(current_radio_band){
     case FM:
       strncpy(&lcd_str_h[13], "FM",2);
@@ -687,8 +691,8 @@ uint8_t main(){
   /********************
    * Radio Update
    *******************/
-    switch(current_radio_band){
-      case FM:
+    switch(current_radio_band){       //Check to see if the radio has changed frequencies, if it has, change the frequency, update LCD,
+      case FM:                        // and set a tuning timer for the LED display.
         if(past_fm_freq != current_fm_freq){
           past_fm_freq = current_fm_freq;
           while(twi_busy()){}
@@ -707,7 +711,7 @@ uint8_t main(){
       default:
       break;
     }
-      delayed_update_flag &= ~(1<<RADIO_FLAG);
+      delayed_update_flag &= ~(1<<RADIO_FLAG);  //Check the strength of the signal every loop. (Written by Roger Traylor)
       fm_rsq_status();
       rssi = si4734_tune_status_buf[4];
       //redefine rssi to be a thermometer code
@@ -829,7 +833,7 @@ uint8_t main(){
     pm = !pm;
   }
 
-  //Alarm
+  //Alarm Timer
   if(alarm_min >= 60){
     alarm_min = 0;
     alarm_hr++;
@@ -849,18 +853,27 @@ uint8_t main(){
     tta_sec = 59;
     tta_min--;
   }
-
-  if(d_mode == CLOCK && tta_min <= 0 && tta_sec <= 0 && alarm_set && sec % 2 && a_mode == BUZZER){
-    TIMSK |= (1 << OCIE1A);
+/********************
+   * Alarm Control
+   *******************/
+  if(d_mode == CLOCK && tta_min <= 0 && tta_sec <= 0 && alarm_set && sec % 2 && a_mode == BUZZER){ //If alarm is active and buzzer mode is selected,
+    TIMSK |= (1 << OCIE1A);                                                                        //turn on the buzzer.
   } else {
     TIMSK &= ~(1 << OCIE1A);
     PORTC = 0;
   }
+
+  if(a_mode == RADIO && alarm_active == U8TRUE && rad_onoff == FALSE){                              //If radio mode is active, turn on the radio.
+    fm_pwr_up();
+    while(twi_busy()){}
+    fm_tune_freq();
+    rad_onoff = U8TRUE;
+  } 
     
   /********************
    * Audio Updates
    *******************/
-  OCR3B = volume;
+  OCR3B = volume;     //Change volume PWM to match volume variable.
   
 /********************
    * Display Updates
@@ -923,18 +936,12 @@ ISR(TIMER0_COMP_vect){
     }
     if(tta_sec > 0 || tta_min > 0){
       tta_sec--;
-      if(d_mode == CLOCK && tta_min <= 0 && tta_sec <= 0 && alarm_set){
-        volume = 255 * 0.5;
-        // if(a_mode == RADIO && rad_onoff == 0){
-        //   //fm_pwr_up();
-        //   //while(twi_busy()){}
-        //   //fm_tune_freq();
-        //   rad_onoff = 1;
-        // } else {
-        //   radio_pwr_dwn();
-        //   rad_onoff = 0;
-        // }
-      }
+    }
+    if(d_mode == CLOCK && tta_min == 0 && tta_sec == 0 && alarm_set){
+      volume = 255 * 0.5;
+      alarm_active = U8TRUE;
+    } else {
+      alarm_active = FALSE;
     }
   }
   DDRA = 0x00;                      //make PORTA an input port with pullups 

@@ -133,7 +133,7 @@ void fm_pwr_up(){
   si4734_wr_buf[1] = 0x50;      //GPO2O enabled, STCINT enabled, use ext. 32khz osc.
   si4734_wr_buf[2] = 0x05;      //OPMODE = 0x05; analog audio output
   twi_start_wr(SI4734_ADDRESS, si4734_wr_buf, 3);
-  _delay_ms(120);               //startup delay as specified 
+  _delay_ms(240);               //startup delay as specified 
   //The seek/tune interrupt is enabled here. If the STCINT bit is set, a 1.5us
   //low pulse will be output from GPIO2/INT when tune or seek is completed.
   set_property(GPO_IEN, GPO_IEN_STCIEN); //seek_tune complete interrupt
